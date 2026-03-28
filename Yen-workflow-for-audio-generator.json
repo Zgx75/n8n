@@ -1,0 +1,484 @@
+{
+  "name": "My workflow 2",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "video-pipeline",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "89243a34-f8b1-4427-8603-8798caa2d102",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        256,
+        -64
+      ],
+      "webhookId": "video-pipeline-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Step 1: Extract audio from video using FFmpeg (via shell command or external service)\n// Input: video file path or URL from webhook\nconst inputData = $input.first().json.body;\nconst videoPath = inputData.video_path || inputData.video_url;\nconst outputDir = inputData.output_dir || '/tmp/video_pipeline';\nconst jobId = Date.now().toString();\n\nif (!videoPath) {\n  throw new Error('Missing video_path or video_url in request body');\n}\n\nreturn [{\n  json: {\n    job_id: jobId,\n    video_path: videoPath,\n    output_dir: `${outputDir}/${jobId}`,\n    audio_output_path: `${outputDir}/${jobId}/audio.mp3`,\n    status: 'initialized'\n  }\n}];"
+      },
+      "id": "051d4ef0-2e0a-49ed-af0f-09b003878620",
+      "name": "Initialize Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\n\nreturn allItems.map(item => ({\n  json: {\n    ...item.json,\n    whisper_model: 'whisper-1',\n    response_format: 'verbose_json',\n    status: 'audio_extracted'\n  }\n}));"
+      },
+      "id": "428dfa91-1dc6-4f6f-831c-5b5bd5b737d0",
+      "name": "Prepare Transcription Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allChunks = $('Extract Audio Chunk').all();\n\nreturn allChunks.map(chunk => ({\n  json: {\n    ...chunk.json,\n    chunk_index: chunk.json.chunk_index\n  },\n  binary: {\n    data: {\n      data: chunk.json.audio_base64,\n      mimeType: 'audio/mpeg',\n      fileName: `chunk_${chunk.json.chunk_index}.mp3`\n    }\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        -64
+      ],
+      "id": "cef8f652-f766-406d-8b02-304d69b41f83",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3001/get-duration",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "video_path",
+              "value": "={{ $json.video_path }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b4e85753-03ea-4a85-8d5f-373d82dc33f7",
+      "name": "Get Video Duration",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        704,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobData = $('Initialize Job').first().json;\nconst totalDuration = $input.first().json.duration;\nconst CHUNK_DURATION = 300;\n\nconst chunks = [];\nlet start = 0;\nlet chunkIndex = 0;\n\nwhile (start < totalDuration) {\n  chunks.push({\n    ...jobData,\n    chunk_index: chunkIndex,\n    start_time: start,\n    chunk_duration: Math.min(CHUNK_DURATION, totalDuration - start),\n    audio_chunk_path: `${jobData.output_dir}/chunks/chunk_${chunkIndex}.mp3`,\n    total_duration: totalDuration\n  });\n  start += CHUNK_DURATION;\n  chunkIndex++;\n}\n\nreturn chunks.map(chunk => ({ json: chunk }));"
+      },
+      "id": "f9ae7314-327a-4ff6-b1b4-879f4362e1b0",
+      "name": "Generate Chunk List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3001/extract-audio-chunk",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"video_path\": \"{{ $json.video_path }}\",\n  \"output_path\": \"{{ $json.audio_chunk_path }}\",\n  \"start_time\": {{ $json.start_time }},\n  \"duration\": {{ $json.chunk_duration }}\n}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "23ac2386-1213-40ab-adfa-0bbc0527ff44",
+      "name": "Extract Audio Chunk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "d616826b-e8d9-49fb-b9a6-7c4e67065cc6",
+      "name": "Aggregate Chunks",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1856,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// Handle both array and single item\nconst allChunks = Array.isArray(input.data) ? input.data : Object.values(input).filter(v => typeof v === 'object' && v !== null && 'text' in v);\n\nconst sortedChunks = allChunks.sort((a, b) => (a.chunk_index ?? 0) - (b.chunk_index ?? 0));\n\nlet mergedSegments = [];\nlet fullText = '';\nlet timeOffset = 0;\n\nfor (const chunk of sortedChunks) {\n  const segments = chunk.segments || [];\n  const chunkDuration = chunk.chunk_duration || 300;\n  \n  mergedSegments = mergedSegments.concat(\n    segments.map(seg => ({\n      ...seg,\n      start: seg.start + timeOffset,\n      end: seg.end + timeOffset\n    }))\n  );\n  \n  fullText += ' ' + (chunk.text || '');\n  timeOffset += chunkDuration;\n}\n\nreturn [{\n  json: {\n    ...$('Initialize Job').first().json,\n    segments: mergedSegments,\n    text: fullText.trim(),\n    total_chunks: sortedChunks.length\n  }\n}];"
+      },
+      "id": "6a499cb4-97cd-482e-b6d5-7cf873a43d60",
+      "name": "Merge Transcriptions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const whisperResponse = $input.first().json;\nconst jobData = $('Initialize Job').first().json;\n\nconst segments = whisperResponse.segments || [];\n\nif (segments.length === 0) {\n  throw new Error('No segments found in Whisper response');\n}\n\nconst SCENE_DURATION_THRESHOLD = 300;\nconst scenes = [];\nlet currentScene = {\n  scene_index: 0,\n  start_time: segments[0].start,\n  end_time: segments[0].end,\n  original_text: segments[0].text,\n  segments: [segments[0]]\n};\n\nfor (let i = 1; i < segments.length; i++) {\n  const seg = segments[i];\n  const sceneDuration = seg.end - currentScene.start_time;\n  \n  if (sceneDuration > SCENE_DURATION_THRESHOLD) {\n    currentScene.duration = currentScene.end_time - currentScene.start_time;\n    scenes.push(currentScene);\n    currentScene = {\n      scene_index: scenes.length,\n      start_time: seg.start,\n      end_time: seg.end,\n      original_text: seg.text,\n      segments: [seg]\n    };\n  } else {\n    currentScene.end_time = seg.end;\n    currentScene.original_text += ' ' + seg.text;\n    currentScene.segments.push(seg);\n  }\n}\n\ncurrentScene.duration = currentScene.end_time - currentScene.start_time;\nscenes.push(currentScene);\n\nreturn scenes.map(scene => ({\n  json: {\n    ...jobData,\n    scene,\n    total_scenes: scenes.length,\n    full_transcript: whisperResponse.text\n  }\n}));"
+      },
+      "id": "60d75fa7-b996-42ac-92af-1be7d09c32d1",
+      "name": "Split into Scenes1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2304,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a professional video narrator. Given the original transcription of a video scene, generate a clear, engaging narration script. The narration should be natural, concise, and fit within the original scene duration. Return JSON with: original_subtitle (cleaned original text), narration (new narration text), estimated_duration_seconds (your estimate of how long the narration will take to speak). Keep narration duration close to original duration.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Scene {{ $json.scene.scene_index + 1 }} of {{ $json.total_scenes }}\\nOriginal duration: {{ $json.scene.duration.toFixed(2) }} seconds\\nOriginal text: {{ $json.scene.original_text }}\\n\\nGenerate the narration. Return only valid JSON.\"\n    }\n  ],\n  \"response_format\": { \"type\": \"json_object\" },\n  \"temperature\": 0.7\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "7e5a1bad-774e-47c5-a175-7acdeeffe93b",
+      "name": "Generate Narration (GPT-4o)1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2528,
+        -64
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "AfOyaiv5Yun4Nltp",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const allGptResponses = $input.all();\nconst allScenes = $('Split into Scenes1').all();\nconst jobData = $('Initialize Job').first().json;\n\nreturn allGptResponses.map((gptItem, index) => {\n  let narrationData;\n  try {\n    const content = gptItem.json.choices[0].message.content;\n    narrationData = typeof content === 'string' ? JSON.parse(content) : content;\n  } catch (e) {\n    throw new Error('Failed to parse GPT narration response: ' + e.message);\n  }\n\n  const scene = allScenes[index].json.scene;\n\n  return {\n    json: {\n      ...jobData,\n      scene: {\n        ...scene,\n        original_subtitle: narrationData.original_subtitle || scene.original_text,\n        narration_text: narrationData.narration,\n        estimated_narration_duration: narrationData.estimated_duration_seconds\n      },\n      narration_text: narrationData.narration,\n      total_scenes: allScenes.length,\n      tts_voice: 'alloy',\n      tts_model: 'tts-1-hd'\n    }\n  };\n});"
+      },
+      "id": "7212eae4-4746-4d32-887b-d429bc0e73b0",
+      "name": "Parse Narration Response1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2752,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/speech",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.tts_model, input: $json.narration_text, voice: $json.tts_voice, response_format: \"mp3\", speed: 1.0 }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "2298ee01-7ced-4a3e-91de-746758ecc0fe",
+      "name": "Text to Speech (OpenAI TTS)1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2960,
+        -64
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "AfOyaiv5Yun4Nltp",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "model",
+              "value": "whisper-1"
+            },
+            {
+              "name": "response_format",
+              "value": "verbose_json"
+            },
+            {
+              "name": "timestamp_granularities[]",
+              "value": "segment"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "id": "8abd84dd-b5bd-4a9a-b420-65fb9f4799e0",
+      "name": "OpenAI Whisper Transcription1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1680,
+        -64
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "UXArPA7cOQCtlxiD",
+          "name": "Header Auth account"
+        },
+        "openAiApi": {
+          "id": "AfOyaiv5Yun4Nltp",
+          "name": "OpenAi account 2"
+        }
+      },
+      "notes": "使用 OpenAI Whisper API 進行語音轉文字，並取得 segment 時間戳記"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Initialize Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Job": {
+      "main": [
+        [
+          {
+            "node": "Get Video Duration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Transcription Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Whisper Transcription1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Video Duration": {
+      "main": [
+        [
+          {
+            "node": "Generate Chunk List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Chunk List": {
+      "main": [
+        [
+          {
+            "node": "Extract Audio Chunk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Audio Chunk": {
+      "main": [
+        [
+          {
+            "node": "Prepare Transcription Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Chunks": {
+      "main": [
+        [
+          {
+            "node": "Merge Transcriptions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Transcriptions": {
+      "main": [
+        [
+          {
+            "node": "Split into Scenes1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split into Scenes1": {
+      "main": [
+        [
+          {
+            "node": "Generate Narration (GPT-4o)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Narration (GPT-4o)1": {
+      "main": [
+        [
+          {
+            "node": "Parse Narration Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Narration Response1": {
+      "main": [
+        [
+          {
+            "node": "Text to Speech (OpenAI TTS)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Whisper Transcription1": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "44ee2d55-5a70-4c86-bf3f-116d0c08d39c",
+  "meta": {
+    "instanceId": "5dbe30470a1530ded9fd21f7d8b3810ee3c918ba622438ed712c75dff9062d7b"
+  },
+  "id": "Bzwb9H0ETBUlYnL2Qhem9",
+  "tags": []
+}
