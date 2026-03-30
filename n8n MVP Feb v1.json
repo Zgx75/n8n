@@ -1,0 +1,426 @@
+{
+  "name": "n8n MVP Feb v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agent-video-process",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "537fc78e-bc25-45d6-a0f5-c9aac73eecc4",
+      "name": "Webhook",
+      "webhookId": "790f7a79-8197-4a45-95b7-842ce85473a9"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"processing\",\n  \"message\": \"影片已接收，正在進行語音辨識與文稿重寫\",\n  \"video\": \"{{ $json.body.video_path }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "9cbe6733-f3d1-41c9-a11c-6312e69b58c5",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://asr:8000/transcribe",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file",
+              "value": "={{ $('Webhook').item.json.body.video_path }}"
+            },
+            {
+              "name": "language",
+              "value": "zh"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 7200000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        416,
+        0
+      ],
+      "id": "64ebed8b-d20e-4a40-a70d-9df41730b15e",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const segments = $input.first().json.segments || [];\n\nconst fullText = segments.map(s => s.text.trim()).join(\" \");\n\nreturn {\n  json: {\n    full_transcript: fullText,\n    word_count: fullText.length\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "fe924191-7c22-4fae-888d-568a23df36b3",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "你是一個專業的科技與學術編輯。請接收使用者提供的口語化逐字稿，進行「講稿重寫 (Script Rewriting)」。\n\n刪除冗言贅字（如「好」、「接下來」、「那個」）與無意義的停頓。\n\n自動糾正 ASR 語音辨識錯誤的學術或專有名詞（上下文推斷）。\n\n將口語轉換為語意連貫、適合真人流暢朗讀的正式文稿。\n\n絕對不可大幅刪減核心知識點，請保持原意與整體長度。\n\n直接輸出重寫後的文稿，不要加上任何解釋、問候語或 Markdown 標題。"
+            },
+            {
+              "content": "={{ $json.full_transcript }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "maxTokens": 4096,
+          "temperature": 0.2
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2,
+      "position": [
+        832,
+        0
+      ],
+      "id": "57bf046f-b1d9-444a-a8f5-417dc7e8aae6",
+      "name": "Message a model",
+      "credentials": {
+        "openAiApi": {
+          "id": "rs3CIDC1u8vCb2VB",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "input": "={{ $json.my_script }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2,
+      "position": [
+        1536,
+        80
+      ],
+      "id": "51c09383-6ecb-44c7-80db-cc74125cf913",
+      "name": "Generate audio",
+      "credentials": {
+        "openAiApi": {
+          "id": "rs3CIDC1u8vCb2VB",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "/files/final_audio_output.mp3",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        80
+      ],
+      "id": "a90d3e9b-9037-4eea-a8d0-ea43b629566f",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook').item.json.body.callback_url }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "completed"
+            },
+            {
+              "name": "original_video",
+              "value": "={{ $('Webhook').item.json.body.video_path }}"
+            },
+            {
+              "name": "audio_file_path",
+              "value": "/files/final_audio_output.mp3"
+            },
+            {
+              "name": "draft_text",
+              "value": "={{ $('Message a model').item.json.output[0].content[0].text }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2400,
+        -16
+      ],
+      "id": "d3e33e4b-259f-4fb1-a4a6-01d22ddf9510",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "/files/final_script_output.txt",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        -192
+      ],
+      "id": "e770d377-76e4-4619-92d9-ec1898b747bb",
+      "name": "Read/Write Files from Disk1"
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "my_script",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1536,
+        -192
+      ],
+      "id": "92cfe11f-a109-40c1-9010-1734928e7374",
+      "name": "Convert to File"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "aaa67814-4e19-45be-b07a-1dfdd9e280f1",
+              "name": "my_script",
+              "value": "={{ $json.output[0].content[0].text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1184,
+        0
+      ],
+      "id": "8fdaeddd-093f-478b-ba19-d80765acaef4",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2032,
+        -48
+      ],
+      "id": "93fd150c-df61-4e99-865a-55370583d0df",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "content": "1/29會議後的產出結果\n詳細可以看1/29的會議紀錄\n"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        96,
+        -448
+      ],
+      "typeVersion": 1,
+      "id": "4dc77319-a979-406d-800b-bbd98481393b",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate audio": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        []
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "114fd22b-0825-42cf-9c8c-9ac4c5966e47",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "26afd67d4e7e48543ca7df1103243ba5dc1742bcb239a8553b207f20bb38757b"
+  },
+  "id": "9vQ34vclFxsPWpVg",
+  "tags": []
+}
