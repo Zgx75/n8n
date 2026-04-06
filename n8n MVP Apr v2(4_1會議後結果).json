@@ -1,0 +1,209 @@
+{
+  "name": "n8n MVP Apr v2(4/1會議後結果)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "process-long-video",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -528,
+        144
+      ],
+      "id": "725d4d4f-399b-45da-8c45-de0a0f889587",
+      "name": "API: 接收影片",
+      "webhookId": "d737514e-79b3-4bc2-8e1d-58c33a380827"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/transcribe",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "language",
+              "value": "zh"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10800000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -336,
+        144
+      ],
+      "id": "ae101ace-444a-489c-8730-dc57a09f8be9",
+      "name": "1. 呼叫 ASR"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "你是一個專業的內容架構師與大學學科校正專家。收到一份連續的對話逐字稿陣列。\n\n【絕對規則】\n1. 嚴格一對一校正：輸入有幾個句子，`corrected_segments` 就必須有幾個物件。絕對禁止刪除任何一個 id，否則系統會崩潰。\n2. 只回傳 `id` 與校正後的 `text`，不需要回傳時間座標。\n3. 專有名詞校正：這是一堂 Computer Networking 課程，請將錯誤的拼音修正為精確的學術名詞（如：Data Grim -> Datagram, Rotters -> Routers, Second -> Segment, Death Nation -> Destination, DataPlan -> Data Plane, PortRouting -> Routing Protocol 等）。\n\n【輸出格式】\n必須是合法 JSON：\n{\n  \"reasoning\": \"簡述你修正了哪些關鍵名詞，以及章節的切分邏輯。\",\n  \"chapters\": [\n    {\n      \"chapter_title\": \"章節標題\",\n      \"summary_bullets\": [\"摘要1\", \"摘要2\", \"摘要3\", \"摘要4\", \"摘要5\"],\n      \"start_id\": 該章節第一句話的id,\n      \"end_id\": 該章節最後一句話的id\n    }\n  ],\n  \"corrected_segments\": [\n    {\"id\": 原id, \"text\": \"校正錯字後的完整句子\"}\n  ]\n}"
+            },
+            {
+              "content": "={{ JSON.stringify($json.raw_segments) }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object"
+            }
+          },
+          "temperature": 0.1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2,
+      "position": [
+        -32,
+        144
+      ],
+      "id": "02155b3e-2125-43f5-af91-ec3e1f2d8fbd",
+      "name": "3. LLM: 語意切分與摘要",
+      "credentials": {
+        "openAiApi": {
+          "id": "rs3CIDC1u8vCb2VB",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const allChapters = $input.all().map(item => item.json);\n\nif (allChapters.length === 0) {\n    throw new Error(\"沒有接收到任何資料。\");\n}\n\nallChapters.sort((a, b) => a.start_time - b.start_time);\n\nconst finalPayload = {\n    project_generated_at: new Date().toISOString(),\n    total_chapters: allChapters.length,\n    chapters: allChapters.map((chap, i) => ({\n        chapter_id: i + 1,\n        title: chap.chapter_title,\n        start_time: chap.start_time,\n        end_time: chap.end_time,\n        summary: chap.summary_bullets,\n        transcript: chap.corrected_segments\n    }))\n};\n\nreturn [{ json: { final_output: finalPayload } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        144
+      ],
+      "id": "b3b687cf-f7e9-40ec-b6cc-fefeae0f7c6d",
+      "name": "5. 彙整全片結構"
+    },
+    {
+      "parameters": {
+        "jsCode": "const segments = $input.first().json.segments || [];\nif (segments.length === 0) throw new Error(\"ASR 辨識結果為空\");\n\nconst mappedSegs = segments.map((s, i) => ({ id: i, start: s.start, end: s.end, text: s.text }));\n\nconst SOFT_LIMIT = 240; \nconst HARD_LIMIT = 360; \n\nlet batches = [];\nlet currentBatch = [];\nlet batchStartTime = 0;\n\nfor (let seg of mappedSegs) {\n    if (currentBatch.length === 0) batchStartTime = seg.start;\n    currentBatch.push(seg);\n    \n    const duration = seg.end - batchStartTime;\n    \n    const textTrimmed = seg.text.trim();\n    const hasPunctuation = /[。！？.!?]$/.test(textTrimmed);\n    \n    if ((duration >= SOFT_LIMIT && hasPunctuation) || duration >= HARD_LIMIT) {\n        batches.push({ raw_segments: currentBatch });\n        currentBatch = [];\n    }\n}\n\nif (currentBatch.length > 0) {\n    batches.push({ raw_segments: currentBatch });\n}\n\nreturn batches.map((b, i) => ({\n    json: { batch_id: i + 1, raw_segments: b.raw_segments }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -176,
+        144
+      ],
+      "id": "150d8f76-d06e-4387-b005-124137844920",
+      "name": "2. 逐字稿動態分塊"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\nconst allOriginals = $(\"2. 逐字稿動態分塊\").all();\n\nfor (let i = 0; i < $input.all().length; i++) {\n    const currentInput = $input.all()[i];\n    \n    let aiData = {};\n    if (currentInput.json.output && currentInput.json.output[0]?.content) {\n        aiData = currentInput.json.output[0].content[0]?.text || {};\n    } else {\n        const content = currentInput.json.message?.content || currentInput.json.text || \"{}\";\n        try {\n            aiData = typeof content === 'string' ? JSON.parse(content) : content;\n        } catch(e) {}\n    }\n    \n    if (typeof aiData === 'string') {\n        try { aiData = JSON.parse(aiData); } catch(e) {}\n    }\n\n    const originalSegments = allOriginals[i]?.json?.raw_segments || [];\n    const llmTextMap = {};\n    (aiData.corrected_segments || []).forEach(seg => {\n        llmTextMap[seg.id] = seg.text;\n    });\n\n    const bulletproofSegments = originalSegments.map(orig => ({\n        original_id: orig.id, // 保留錨點\n        id: originalSegments.indexOf(orig) + 1, \n        start: orig.start,\n        end: orig.end,\n        text: llmTextMap[orig.id] || orig.text \n    }));\n\n    const chapters = aiData.chapters || [];\n\n    chapters.forEach((chap) => {\n        const chapSegs = bulletproofSegments.filter(s => \n            (s.original_id >= chap.start_id) && \n            (s.original_id <= chap.end_id)\n        );\n        \n        chapSegs.forEach(s => delete s.original_id);\n        \n        const start_time = chapSegs.length > 0 ? chapSegs[0].start : 0;\n        const end_time = chapSegs.length > 0 ? chapSegs[chapSegs.length - 1].end : 0;\n\n        results.push({\n            json: {\n                chapter_title: chap.chapter_title,\n                start_time: start_time,\n                end_time: end_time,\n                summary_bullets: chap.summary_bullets,\n                corrected_segments: chapSegs\n            }\n        });\n    });\n}\n\nif (results.length === 0) {\n    throw new Error(\"提取失敗：檢查 LLM 節點是否確實吐出 JSON 格式，或檢查上游節點。\");\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        144
+      ],
+      "id": "54e5a6a7-c61d-4baa-aae2-c363185f755f",
+      "name": "4. 時間軸對齊"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "API: 接收影片": {
+      "main": [
+        [
+          {
+            "node": "1. 呼叫 ASR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. 呼叫 ASR": {
+      "main": [
+        [
+          {
+            "node": "2. 逐字稿動態分塊",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. LLM: 語意切分與摘要": {
+      "main": [
+        [
+          {
+            "node": "4. 時間軸對齊",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. 彙整全片結構": {
+      "main": [
+        []
+      ]
+    },
+    "2. 逐字稿動態分塊": {
+      "main": [
+        [
+          {
+            "node": "3. LLM: 語意切分與摘要",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. 時間軸對齊": {
+      "main": [
+        [
+          {
+            "node": "5. 彙整全片結構",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "9366d8b2-3623-4a37-8857-f065f9c53f69",
+  "meta": {
+    "instanceId": "26afd67d4e7e48543ca7df1103243ba5dc1742bcb239a8553b207f20bb38757b"
+  },
+  "id": "sew5a6T0wsjD8Vph",
+  "tags": []
+}
