@@ -1,0 +1,567 @@
+{
+  "name": "0812 ver (copy from 0712)",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1552,
+        32
+      ],
+      "id": "751dd3bf-bc35-4344-9abd-a1b0da0ffc5e",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const input = items[0].json;\n  const results = [];\n\n  if (input.chapters && Array.isArray(input.chapters)) {\n    input.chapters.forEach((chapter, index) => {\n      results.push({\n        json: {\n          page: index + 1,\n          title: chapter.title,\n          bullets: chapter.bullets || [], \n          image_description: chapter.image_description || \"\", \n          image_gen_prompt: chapter.image_gen_prompt || \"\", \n          image_drive_direct_url: chapter.image_drive_direct_url || \"\" \n          \n        }\n      });\n    });\n  } else {\n    throw new Error(\"接收資料格式不符，請檢查 chapters 欄位\");\n  }\n\n  return results;\n\n} catch (error) {\n  return [{ json: { status: \"解析失敗\", error: error.message } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -528,
+        32
+      ],
+      "id": "1b0a8c09-e5f0-4410-8541-e6d781196387",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        224,
+        32
+      ],
+      "id": "3a6595e9-608e-48c1-9024-9d389a497302",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "name": "Replace Me",
+      "typeVersion": 1,
+      "position": [
+        1328,
+        64
+      ],
+      "id": "c9fc5735-a0fe-4294-8431-f773daca7ccf"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst { execSync } = require('child_process');\nconst path = require('path');\n\nconst baseDir = 'C:\\\\n8n_tmp\\\\';\nconst marpExecutable = 'C:\\\\Users\\\\leejy\\\\AppData\\\\Roaming\\\\npm\\\\marp.cmd';\nconst edgePath = 'C:\\\\Program Files (x86)\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe';\n\ntry {\n  // --- 【核心修正：跨節點抓取文字資料】 ---\n  // 不管 OpenAI 給什麼，我們直接去問 Loop 節點現在跑的是哪一筆文字\n  const loopItem = $node[\"Loop Over Items\"].json; \n  \n  // 從 Loop 資料裡精準抓取 page, title, bullets\n  const pageNum = loopItem.page || 1; \n  const title = loopItem.title || \"課程重點\";\n  let contentArray = (loopItem.bullets && Array.isArray(loopItem.bullets)) ? loopItem.bullets : [\"無內容\"];\n  // ---------------------------------------\n                     \n  const bulletMd = contentArray.map(b => `- ${b.trim()}`).join('\\n');\n  // --- 結束 ---\n\n  const localImgName = `img_${pageNum}.png`;\n  const localImgPath = path.join(baseDir, localImgName);\n  let dataUri = \"\";\n\n  const b64 = $input.item.json?.data?.[0]?.b64_json;\n  if (b64) {\n      if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });\n      const buffer = Buffer.from(b64, 'base64');\n      fs.writeFileSync(localImgPath, buffer);\n      dataUri = `data:image/png;base64,${b64}`;\n  }\n\n  // 3. 組合 Markdown\n  const marpContent = `---\nmarp: true\ntheme: gaia\nstyle: |\n  section {\n    font-size: 23px; \n    background: #ffffff;\n    color: #000000;\n  }\n  li {\n    font-size: 20px; \n  }\n---\n\n# ${title}\n\n${bulletMd}\n\n${dataUri ? `![bg right:45% contain](${dataUri})` : \"\"}\n`;\n\n  const mdPath = path.join(baseDir, `p_${pageNum}.md`);\n  const pngPath = path.join(baseDir, `r_${pageNum}.png`);\n  \n  fs.writeFileSync(mdPath, marpContent, 'utf8');\n\n  // 4. 執行渲染\n  execSync(`set \"CHROME_PATH=${edgePath}\" && \"${marpExecutable}\" \"${mdPath}\" --image png --output \"${pngPath}\" --no-sandbox --allow-local-files`);\n\n  return [{\n    json: { \n      status: \"渲染成功\", \n      page: pageNum, \n      realSize: dataUri.length, \n      path: pngPath \n    }\n  }];\n\n} catch (error) {\n  return [{ json: { status: \"渲染失敗\", error: error.message } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        64
+      ],
+      "id": "1f52c5c3-dde9-4af5-a09a-013fcd17aa36",
+      "name": "Code in JavaScript2(merge img+generate slide)"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.image_drive_direct_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        720,
+        64
+      ],
+      "id": "1b7ef553-c7af-49f8-9821-2a845d92de2f",
+      "name": "（下載截圖 ) HTTP Request"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "64ad8e05-3db9-4b45-9d8b-c9406ab41ddb",
+              "name": "chapters",
+              "value": "[   {     \"id\": 1,     \"title\": \"管線化的概念與效益\",     \"start_time\": 0,     \"bullets\": [       \"管線化允許發送者同時傳送多個未確認封包，增加序列號範圍及緩衝區以提高效率。\",       \"Stop-and-Wait的低效導致傳輸效率不高，管線化能有效解決此問題。\",       \"三個封包的管線化可使利用率提高三倍，顯示出時間關係的重要性。\",       \"封包傳送及ACK回覆的時間關係展示了管線化的運作過程。\",       \"管線化的時間軸顯示了如何在RTT和L/R的時間內發送下一個封包。\"     ],     \"image_description\": \"畫面以時間軸方式呈現管線化封包傳送的過程，對比 Stop-and-Wait 的低效率，並標示三個封包管線化後利用率提升三倍、以及封包傳送與 ACK 回覆之間的時間關係（RTT、L/R）。\",     \"image_gen_prompt\": \"Create a timeline diagram showing pipelined packet transmission with 3 packets, contrasted with Stop-and-Wait above it. Top row: Stop-and-Wait showing long idle gaps between each packet and its ACK. Bottom row: Pipelining showing 3 packets sent back-to-back without waiting, with propagation delay lines to the receiver and dashed ACK return lines, annotated with 'RTT' and 'L/R' time intervals. Add a callout box stating 'Utilization increased 3x with pipelining'. Clean network protocol timeline diagram style, similar to a standard networking textbook figure.\",     \"image_drive_direct_url\": \"\"   },   {     \"id\": 2,     \"title\": \"Go-Back-N發送者設計\",     \"start_time\": 141,     \"bullets\": [       \"Go-Back-N協議允許發送者在任意時間點觀察in-flight封包狀態，並解釋Window的概念。\",       \"發送者需準備一個Queue來管理in-flight封包，確保有效的封包傳送。\",       \"發送者的Queue狀態顯示了ACK的處理過程及不同顏色封包的意義。\",       \"藍色封包在路上掉落，發送者需根據ACK狀態進行重傳。\",       \"Go-Back-N發送者設計強調了發送者的Queue狀態及ACK的處理。\"     ],     \"image_description\": \"畫面以佇列（Queue）示意圖呈現 Go-Back-N 發送端設計：一排彩色封包代表不同的 ACK 處理狀態，其中一個封包（藍色）標示為在路上遺失，需要根據 ACK 狀態重傳。\",     \"image_gen_prompt\": \"Create a diagram illustrating the Go-Back-N sender-side queue. Draw a horizontal queue of packet boxes in different colors representing different states: sent-and-acked (green), sent-and-in-flight (yellow), and one packet highlighted in blue with a broken/dashed outline labeled 'Lost in transit'. Add an arrow showing the sender window sliding forward as ACKs arrive. Include a small annotation explaining that the sender must retransmit based on ACK status. Clean technical protocol diagram style, similar to a standard networking textbook figure.\",     \"image_drive_direct_url\": \"\"   },   {     \"id\": 3,     \"title\": \"Go-Back-N的重傳機制\",     \"start_time\": 576.429,     \"bullets\": [       \"Go-Back-N的重傳機制在ACK未回覆時，發送者需重傳所有in-flight封包。\",       \"累積ACK的概念幫助發送者更新狀態，確保封包的正確傳送。\",       \"當ACK回來時，發送者可更新Window，並繼續傳送新的封包。\",       \"重傳機制確保在封包丟失或延遲時，發送者能夠有效地重傳封包。\",       \"Go-Back-N的重傳策略強調了在超時情況下的封包重傳。\"     ],     \"image_description\": \"畫面強調 Go-Back-N 的重傳邏輯：當 ACK 未回覆時，發送者需要重傳所有 in-flight 封包，並展示累積 ACK（cumulative ACK）如何幫助發送者更新視窗狀態。\",     \"image_gen_prompt\": \"Create a diagram highlighting the Go-Back-N retransmission logic. Show a sender window with several in-flight packets; one packet's ACK fails to return (shown with a red X on the return arrow). Then show an arrow labeled 'Retransmit ALL in-flight packets' re-sending every packet in the window. Separately illustrate 'Cumulative ACK' with an incoming ACK arrow labeled 'ACK n' that slides the window forward past multiple previously sent packets at once. Clean protocol diagram style, similar to a standard networking textbook figure.\",     \"image_drive_direct_url\": \"\"   },   {     \"id\": 4,     \"title\": \"Go-Back-N的計時器設計\",     \"start_time\": 1011.857,     \"bullets\": [       \"Go-Back-N的計時器設計強調Timer應設置在最老的未確認封包上。\",       \"當ACK回來時，最老封包的Timer失效，確保計時器的有效性。\",       \"計時器的設計確保在封包丟失時，發送者能夠及時重傳。\",       \"Go-Back-N的計時器策略確保發送者能夠有效管理封包的重傳。\",       \"計時器的使用狀態顯示了如何在超時情況下進行封包重傳。\"     ],     \"image_description\": \"畫面聚焦在 Go-Back-N 的計時器設計：計時器綁定在最舊的未確認封包上，當該封包的 ACK 回來時計時器失效，若逾時則觸發重傳。\",     \"image_gen_prompt\": \"Create a diagram focusing on Go-Back-N timer logic. Show a row of unacknowledged packets in a sender window, with a clock/timer icon attached specifically to the oldest unacknowledged packet, labeled 'Timer tied to oldest unACKed packet'. Show one branch where an ACK arrives for that oldest packet, causing the timer to reset/stop (labeled 'ACK received → timer restarts on next oldest packet'), and another branch where the timer expires, triggering a 'Timeout → Retransmit' action. Clean protocol diagram style, similar to a standard networking textbook figure.\",     \"image_drive_direct_url\": \"\"   },   {     \"id\": 5,     \"title\": \"Go-Back-N的接收者行為\",     \"start_time\": 1447.286,     \"bullets\": [       \"Go-Back-N的接收者需記住rcv_base，並根據收到的封包狀態進行ACK回覆。\",       \"接收者可選擇丟棄或快取不按順序的封包，這是一個實現決策。\",       \"接收者的設計簡單，強調了如何處理重複的ACK及不按順序的封包。\",       \"Go-Back-N的接收者行為展示了如何有效管理封包的接收和ACK的回覆。\",       \"接收者需根據封包狀態進行ACK的回覆，確保傳輸的可靠性。\"     ],     \"image_description\": \"畫面以流程圖呈現 Go-Back-N 接收端行為：接收端記住 rcv_base（接收基準），依封包序列號是否正確決定回覆 ACK 或丟棄失序封包，設計簡單不做快取。\",     \"image_gen_prompt\": \"Create a flowchart illustrating Go-Back-N receiver-side behavior. Start with an incoming packet entering a decision diamond labeled 'seq# == rcv_base?'. If yes, branch to 'Deliver to application, send ACK, advance rcv_base'. If no, branch to 'Discard out-of-order packet, resend duplicate ACK for last correctly received packet'. Add a note emphasizing the simple design with no buffering of out-of-order packets. Clean protocol flowchart style, similar to a standard networking textbook figure.\",     \"image_drive_direct_url\": \"\"   },   {     \"id\": 6,     \"title\": \"Go-Back-N的發送者擴展有限狀態機\",     \"start_time\": 1857,     \"bullets\": [       \"Go-Back-N的發送者擴展有限狀態機展示了如何根據ACK進行封包的發送及重傳。\",       \"發送者需根據ACK的回覆更新狀態，確保封包的正確傳送。\",       \"在超時情況下，發送者需重傳未確認的封包，確保傳輸的可靠性。\",       \"發送者的有限狀態機設計強調了如何有效管理封包的發送和重傳。\",       \"有限狀態機的設計展示了發送者在不同狀態下的行為及其對ACK的處理。\"     ],     \"image_description\": \"畫面以有限狀態機（FSM）圖呈現 Go-Back-N 發送端的擴展狀態轉換，包含依 ACK 更新狀態、超時後重傳未確認封包等轉換條件。\",     \"image_gen_prompt\": \"Create a finite state machine (FSM) diagram for the Go-Back-N sender extended logic. Draw state nodes connected by labeled transition arrows: 'rdt_send(data)' sends a packet and starts a timer if needed; 'rdt_rcv(ACK)' with a valid new ACK updates the base and window; 'timeout' triggers retransmission of all unacknowledged packets and restarts the timer. Style as a classic academic protocol state-machine diagram with clear transition labels, similar to a standard networking textbook figure.\",     \"image_drive_direct_url\": \"\"   },   {     \"id\": 7,     \"title\": \"Go-Back-N的發送者行為\",     \"start_time\": 2355,     \"bullets\": [       \"發送者在不同狀態下的行為展示了如何根據ACK進行封包的發送。\",       \"當base等於nextseqnum時，發送者需啟動計時器，確保封包的正確傳送。\",       \"在超時情況下，發送者需重傳未確認的封包，確保傳輸的可靠性。\",       \"發送者的行為展示了如何有效管理封包的發送和重傳。\",       \"有限狀態機的設計展示了發送者在不同狀態下的行為及其對ACK的處理。\"     ],     \"image_description\": \"畫面聚焦於 Go-Back-N 發送者在不同狀態下的行為：當 base 等於 nextseqnum 時啟動計時器，超時後重傳所有未確認封包。\",     \"image_gen_prompt\": \"Create a state-focused diagram showing Go-Back-N sender actions. Highlight a condition box: 'if base == nextseqnum → start timer'. Show the state where new packets are queued, then a timeout event triggers an arrow labeled 'Timeout → retransmit all unacknowledged packets, restart timer'. Use clear state boxes and directional arrows in a clean academic protocol diagram style, similar to a standard networking textbook figure.\",     \"image_drive_direct_url\": \"\"   },   {     \"id\": 8,     \"title\": \"Go-Back-N的發送者狀態管理\",     \"start_time\": 2721,     \"bullets\": [       \"發送者需根據ACK的回覆更新狀態，確保封包的正確傳送。\",       \"在超時情況下，發送者需重傳未確認的封包，確保傳輸的可靠性。\",       \"發送者的狀態管理展示了如何有效管理封包的發送和重傳。\",       \"有限狀態機的設計展示了發送者在不同狀態下的行為及其對ACK的處理。\",       \"發送者需根據封包狀態進行ACK的回覆，確保傳輸的可靠性。\"     ],     \"image_description\": \"畫面說明 Go-Back-N 發送者的狀態管理：依 ACK 回覆更新狀態、逾時後重傳未確認封包，呈現狀態轉換的整體流程。\",     \"image_gen_prompt\": \"Create a state-transition diagram illustrating Go-Back-N sender state management. Show a central sender state box with incoming transitions: 'ACK received → update base, refresh timer', and 'Timeout → retransmit all unacknowledged packets'. Use rounded rectangles for states and labeled arrows for transitions, in a clean academic protocol state-machine diagram style, similar to a standard networking textbook figure.\",     \"image_drive_direct_url\": \"\"   },   {     \"id\": 9,     \"title\": \"Go-Back-N的接收者擴展有限狀態機\",     \"start_time\": 3087,     \"bullets\": [       \"接收者需根據收到的封包狀態進行ACK的回覆，並可選擇丟棄或快取不按順序的封包。\",       \"接收者的擴展有限狀態機展示了如何處理正確接收的封包及重複ACK的回覆策略。\",       \"接收者需記住expectedseqnum，確保封包的正確接收。\",       \"接收者的行為展示了如何有效管理封包的接收和ACK的回覆。\",       \"接收者需根據封包狀態進行ACK的回覆，確保傳輸的可靠性。\"     ],     \"image_description\": \"畫面以有限狀態機（FSM）圖呈現 Go-Back-N 接收端的擴展狀態轉換：收到正確序列號封包時發送 ACK 並前進 expectedseqnum，收到失序封包則丟棄並重送前一個 ACK。\",     \"image_gen_prompt\": \"Create a finite state machine (FSM) diagram for the Go-Back-N receiver extended logic. Draw a state node 'Wait for expectedseqnum'. Add a transition labeled 'rdt_rcv(packet) with correct seq# → deliver to application, send ACK, advance expectedseqnum' looping back to the same state. Add another transition labeled 'rdt_rcv(packet) with incorrect seq# → discard, resend last ACK (duplicate ACK)' also looping back. Style as a classic academic protocol state-machine diagram, similar to a standard networking textbook figure.\",     \"image_drive_direct_url\": \"\"   } ]",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1056,
+        -592
+      ],
+      "id": "3fc1ac20-7972-4e65-bc95-27c963f0a9b2",
+      "name": "(丟prompt)Edit Fields"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -160,
+        32
+      ],
+      "id": "419a960e-4a31-4882-a0dc-e2d69445767d",
+      "name": "（bullets 濃縮）HTTP Request",
+      "credentials": {
+        "openAiApi": {
+          "id": "jvZPB91p8PAlEPaW",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const content = $json.choices[0].message.content;\nconst parsed = JSON.parse(content);\n\nconst original = $('Code in JavaScript').item.json;\n\nreturn {\n  json: {\n    ...original,\n    bullets: parsed.bullets\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        32
+      ],
+      "id": "84d0d1e7-4829-481e-822d-081e82b7a9a8",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e71bb715-c8e2-45ce-a1da-72cc9ccc2a40",
+              "leftValue": "={{ $json.image_drive_direct_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        48
+      ],
+      "id": "ad678670-e35a-4baf-91b8-f8ac37225552",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const bullets = item.json.bullets || [];\n\n  const payload = {\n    model: \"gpt-4o-mini\",\n    response_format: { type: \"json_object\" },\n    messages: [\n      {\n        role: \"system\",\n        content: \"你是投影片文字精簡助手。輸入是一組教學重點句子，請盡可能縮短縮短縮短句子，但是要保留所有重點，把每一句濃縮不超過23個中文字（或等長英文）的精簡句子，保留專有名詞，語意不失真，但要非常精煉，請力求圖片上文字完整部歪扭失真，且將圖片範圍鎖定在畫面正中間一個1024*1024的正方形框架中。用 JSON 回傳，格式為 {\\\"bullets\\\": [\\\"...\\\", \\\"...\\\"]}，數量要跟輸入一樣多，順序不變。\"\n      },\n      {\n        role: \"user\",\n        content: JSON.stringify(bullets)\n      }\n    ]\n  };\n\n  return {\n    json: {\n      ...item.json,\n      payload: payload\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -352,
+        32
+      ],
+      "id": "618232a3-8d56-4ecf-b917-c4041f95d8d4",
+      "name": "(組 payload)Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/edits",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-image-1.5"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $('Loop Over Items').item.json.image_gen_prompt + \" Ensure all text, tables, and diagrams are fully visible within the frame with comfortable margins on all sides. Nothing should touch or extend beyond the image edges. Leave generous white space around the entire content.\" }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "image",
+              "inputDataFieldName": "=data"
+            },
+            {
+              "name": "n",
+              "value": "1"
+            },
+            {
+              "name": "size",
+              "value": "1024x1024"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        896,
+        64
+      ],
+      "id": "42a7e3ae-6b46-4fb3-8d92-2bb6641522db",
+      "name": "（有參考圖的生圖）HTTP Request 2",
+      "credentials": {
+        "openAiApi": {
+          "id": "jvZPB91p8PAlEPaW",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/generations",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"gpt-image-1.5\",\n  prompt: $json.image_gen_prompt,\n  size: \"1024x1024\",\n  quality: \"high\",\n  n: 1\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        816,
+        -144
+      ],
+      "id": "f94d77a1-6ae2-44c2-b9ee-377bee05c905",
+      "name": "（沒參考圖的生圖）HTTP Request",
+      "credentials": {
+        "openAiApi": {
+          "id": "jvZPB91p8PAlEPaW",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = items[0].json; // 假設整個原始 JSON 放在前一個節點輸出的 json 裡\nconst slides = data.planned_slides;\n\nconst results = slides.map((s, index) => {\n  // 這份資料 bullets 的位置在不同批次的檔案裡略有不同，這裡做個保險判斷\n  let bullets = [];\n  if (s.slide_content?.on_slide_content?.display_bullets) {\n    bullets = s.slide_content.on_slide_content.display_bullets;\n  } else if (Array.isArray(s.slide_content)) {\n    bullets = s.slide_content;\n  }\n\n  const visualHint = s.slide_generation_instruction?.visual_plan\n    || s.visual_design_instruction\n    || s.layout_hint\n    || \"\";\n\n  return {\n    json: {\n      id: index + 1,\n      title: s.title,\n      start_time: s.source_start_time,\n      bullets: bullets,\n      visual_hint: visualHint // 先保留給下一步 LLM 當素材，最後輸出時可以拿掉\n    }\n  };\n});\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1040,
+        32
+      ],
+      "id": "60139948-0f21-437e-bf7d-09b04a417c77",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"gpt-4o-mini\",\n  response_format: { type: \"json_object\" },\n  messages: [\n    {\n      role: \"system\",\n      content: \"你是教學簡報配圖企劃。根據投影片標題、重點內容、版面提示，產出兩個欄位：image_description（中文，100字內，描述畫面該呈現什麼視覺內容）、image_gen_prompt（英文，給AI生圖模型用的詳細指令，包含具體版面配置、圖示、箭頭、標籤等元素）。只回傳 JSON，格式為 {\\\"image_description\\\": \\\"...\\\", \\\"image_gen_prompt\\\": \\\"...\\\"}\"\n    },\n    {\n      role: \"user\",\n      content: \"標題：\" + $json.title + \"\\n重點：\" + JSON.stringify($json.bullets) + \"\\n版面提示：\" + $json.visual_hint\n    }\n  ]\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -864,
+        32
+      ],
+      "id": "289bb828-7ea1-4499-83dc-126353c11491",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const content = $json.choices[0].message.content;\nconst parsed = JSON.parse(content);\nconst original = $('節點1的名稱').item.json; // 換成你節點1實際的名稱\n\nreturn {\n  json: {\n    id: original.id,\n    title: original.title,\n    start_time: original.start_time,\n    bullets: original.bullets,\n    image_description: parsed.image_description,\n    image_gen_prompt: parsed.image_gen_prompt,\n    image_drive_direct_url: \"\"\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -704,
+        32
+      ],
+      "id": "1e4f0cf5-d4a1-442d-9c60-3e3a65a911cd",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:\\n8n_tmp\\slide_plan.json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        -1392,
+        32
+      ],
+      "id": "a67e7cc9-2ed2-4c23-af58-f5ee514ea175",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 把 binary 檔案內容轉成文字，再 parse 成 JSON 物件\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst jsonText = buffer.toString('utf8');\nconst parsedData = JSON.parse(jsonText);\n\nreturn [{ json: parsedData }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1216,
+        32
+      ],
+      "id": "a1130bc7-6b1f-4f6c-a0c4-4e718d4f0c47",
+      "name": "Code in JavaScript4"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "(組 payload)Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace Me": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2(merge img+generate slide)": {
+      "main": [
+        [
+          {
+            "node": "Replace Me",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "（下載截圖 ) HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "（有參考圖的生圖）HTTP Request 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "(丟prompt)Edit Fields": {
+      "main": [
+        []
+      ]
+    },
+    "（bullets 濃縮）HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "（沒參考圖的生圖）HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "（下載截圖 ) HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "(組 payload)Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "（bullets 濃縮）HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "（有參考圖的生圖）HTTP Request 2": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2(merge img+generate slide)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "（沒參考圖的生圖）HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2(merge img+generate slide)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript4": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "dc0ccbd8-afc4-4e23-a73a-8ac4fc1346a2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0f9e14e694c767389d11465d994d8c88278330cf58a228230c6a4820d30322b3"
+  },
+  "id": "YjjGj7oAgrYYeiPg",
+  "tags": []
+}
